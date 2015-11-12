@@ -22,6 +22,7 @@ It has these top-level messages:
 package grpc_testing
 
 import proto "github.com/golang/protobuf/proto"
+import fmt "fmt"
 import math "math"
 
 import (
@@ -30,11 +31,8 @@ import (
 )
 
 // Reference imports to suppress errors if they are not otherwise used.
-var _ context.Context
-var _ grpc.ClientConn
-
-// Reference imports to suppress errors if they are not otherwise used.
 var _ = proto.Marshal
+var _ = fmt.Errorf
 var _ = math.Inf
 
 // The type of payload that should be returned.
@@ -331,6 +329,10 @@ func init() {
 	proto.RegisterEnum("grpc.testing.PayloadType", PayloadType_name, PayloadType_value)
 }
 
+// Reference imports to suppress errors if they are not otherwise used.
+var _ context.Context
+var _ grpc.ClientConn
+
 // Client API for TestService service
 
 type TestServiceClient interface {
@@ -339,6 +341,9 @@ type TestServiceClient interface {
 	// One request followed by one response.
 	// The server returns the client payload as-is.
 	UnaryCall(ctx context.Context, in *SimpleRequest, opts ...grpc.CallOption) (*SimpleResponse, error)
+	// One request followed by one error.
+	// The server returns the client payload as error.
+	UnaryCallError(ctx context.Context, in *SimpleRequest, opts ...grpc.CallOption) (*SimpleResponse, error)
 	// One request followed by a sequence of responses (streamed download).
 	// The server returns the payload with client desired type and sizes.
 	StreamingOutputCall(ctx context.Context, in *StreamingOutputCallRequest, opts ...grpc.CallOption) (TestService_StreamingOutputCallClient, error)
@@ -376,6 +381,15 @@ func (c *testServiceClient) EmptyCall(ctx context.Context, in *Empty, opts ...gr
 func (c *testServiceClient) UnaryCall(ctx context.Context, in *SimpleRequest, opts ...grpc.CallOption) (*SimpleResponse, error) {
 	out := new(SimpleResponse)
 	err := grpc.Invoke(ctx, "/grpc.testing.TestService/UnaryCall", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *testServiceClient) UnaryCallError(ctx context.Context, in *SimpleRequest, opts ...grpc.CallOption) (*SimpleResponse, error) {
+	out := new(SimpleResponse)
+	err := grpc.Invoke(ctx, "/grpc.testing.TestService/UnaryCallError", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -518,6 +532,9 @@ type TestServiceServer interface {
 	// One request followed by one response.
 	// The server returns the client payload as-is.
 	UnaryCall(context.Context, *SimpleRequest) (*SimpleResponse, error)
+	// One request followed by one error.
+	// The server returns the client payload as error.
+	UnaryCallError(context.Context, *SimpleRequest) (*SimpleResponse, error)
 	// One request followed by a sequence of responses (streamed download).
 	// The server returns the payload with client desired type and sizes.
 	StreamingOutputCall(*StreamingOutputCallRequest, TestService_StreamingOutputCallServer) error
@@ -557,6 +574,18 @@ func _TestService_UnaryCall_Handler(srv interface{}, ctx context.Context, dec fu
 		return nil, err
 	}
 	out, err := srv.(TestServiceServer).UnaryCall(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func _TestService_UnaryCallError_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error) (interface{}, error) {
+	in := new(SimpleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	out, err := srv.(TestServiceServer).UnaryCallError(ctx, in)
 	if err != nil {
 		return nil, err
 	}
@@ -673,6 +702,10 @@ var _TestService_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UnaryCall",
 			Handler:    _TestService_UnaryCall_Handler,
+		},
+		{
+			MethodName: "UnaryCallError",
+			Handler:    _TestService_UnaryCallError_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

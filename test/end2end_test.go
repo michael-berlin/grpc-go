@@ -34,6 +34,7 @@
 package grpc_test
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -103,6 +104,13 @@ func newPayload(t testpb.PayloadType, size int32) (*testpb.Payload, error) {
 }
 
 func (s *testServer) UnaryCall(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
+	return s.unaryCallCommon(ctx, in, false /* respondAsError */)
+}
+func (s *testServer) UnaryCallError(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
+	return s.unaryCallCommon(ctx, in, true /* respondAsError */)
+}
+
+func (s *testServer) unaryCallCommon(ctx context.Context, in *testpb.SimpleRequest, respondAsError bool) (*testpb.SimpleResponse, error) {
 	md, ok := metadata.FromContext(ctx)
 	if ok {
 		if err := grpc.SendHeader(ctx, md); err != nil {
@@ -132,17 +140,20 @@ func (s *testServer) UnaryCall(ctx context.Context, in *testpb.SimpleRequest) (*
 		}
 	}
 
-	// Simulate some service delay.
-	time.Sleep(time.Second)
-
 	payload, err := newPayload(in.GetResponseType(), in.GetResponseSize())
 	if err != nil {
 		return nil, err
 	}
 
-	return &testpb.SimpleResponse{
+	response := &testpb.SimpleResponse{
 		Payload: payload,
-	}, nil
+	}
+	if respondAsError {
+		err := errors.New(proto.MarshalTextString(response))
+		fmt.Println("size of returned error:", len(err.Error()))
+		return nil, err
+	}
+	return response, nil
 }
 
 func (s *testServer) StreamingOutputCall(args *testpb.StreamingOutputCallRequest, stream testpb.TestService_StreamingOutputCallServer) error {
@@ -601,6 +612,48 @@ func testLargeUnary(t *testing.T, e env) {
 	}
 }
 
+func TestLargeErrorUnary(t *testing.T) {
+	//	for _, e := range listTestEnv() {
+	for _, e := range []env{{"tcp", nil, ""}} {
+		for i := 4074; i <= 20*1024; i++ {
+			fmt.Println("testing response size:", i)
+			testLargeErrorUnary(t, e, i)
+		}
+	}
+}
+
+func testLargeErrorUnary(t *testing.T, e env, respSize int) {
+	s, cc := setUp(t, nil, math.MaxUint32, "", e)
+	tc := testpb.NewTestServiceClient(cc)
+	defer tearDown(s, cc)
+	argSize := 271828
+	//	respSize := 314159
+
+	payload, err := newPayload(testpb.PayloadType_COMPRESSABLE, int32(argSize))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := &testpb.SimpleRequest{
+		ResponseType: testpb.PayloadType_COMPRESSABLE.Enum(),
+		ResponseSize: proto.Int32(int32(respSize)),
+		Payload:      payload,
+	}
+	reply, err := tc.UnaryCallError(context.Background(), req)
+	if err == nil {
+		t.Fatalf("TestService/UnaryCall(_, _) = %v, <nil>, want <nil>, _", reply)
+	}
+	replyFromError := &testpb.SimpleResponse{}
+	if errUnmarshal := proto.UnmarshalText(grpc.ErrorDesc(err), replyFromError); errUnmarshal != nil {
+		t.Fatalf("Cannot decode payload from returned error (%v): %v", err, errUnmarshal)
+	}
+	pt := replyFromError.GetPayload().GetType()
+	ps := len(replyFromError.GetPayload().GetBody())
+	if pt != testpb.PayloadType_COMPRESSABLE || ps != respSize {
+		t.Fatalf("Got the reply with type %d len %d; want %d, %d", pt, ps, testpb.PayloadType_COMPRESSABLE, respSize)
+	}
+}
+
 func TestMetadataUnaryRPC(t *testing.T) {
 	for _, e := range listTestEnv() {
 		testMetadataUnaryRPC(t, e)
@@ -795,12 +848,12 @@ func testCancelNoIO(t *testing.T, e env) {
 	go func() {
 		defer close(ch)
 		// This should be blocked until the 1st is canceled.
-		ctx, _ := context.WithTimeout(context.Background(), 2 * time.Second)
+		ctx, _ := context.WithTimeout(context.Background(), 2*time.Second)
 		if _, err := tc.StreamingInputCall(ctx); err != nil {
 			t.Errorf("%v.StreamingInputCall(_) = _, %v, want _, <nil>", tc, err)
 		}
 	}()
-	cancel();
+	cancel()
 	<-ch
 }
 
